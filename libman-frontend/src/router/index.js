@@ -61,7 +61,9 @@ const router = createRouter({
   ],
 })
 
-// 路由守卫
+// 路由守卫：
+// - 通过 meta.requiresAuth 控制需要登录的页面
+// - 首次进入页面时（from.name 为空），为了避免“先渲染再跳转”的闪烁，这里会先静默拉取用户信息
 router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   

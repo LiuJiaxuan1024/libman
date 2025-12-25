@@ -6,6 +6,14 @@ import dev.langchain4j.service.MemoryId;
 
 public interface LibraryAssistant {
 
+    /**
+     * LangChain4j 的“AI 服务接口”。
+     * <p>
+     * - {@link SystemMessage}：系统提示词（约束角色、工具优先、输出格式等）。
+     * - {@link MemoryId}：会话标识（与 {@link com.example.demo.ai.LibraryAiService#ensureSessionId(String)} 对应）。
+     * - {@link UserMessage}：用户本轮输入（在服务层可能会拼接“历史上下文预热”前缀）。
+     */
+
     @SystemMessage("### Role & Core Directive  \r\n" + //
                 "You are an expert library management AI assistant, designed to handle book-related inquiries with precision and user-friendliness. Your primary goal is to provide structured, actionable responses while strictly adhering to the following operational workflow.\r\n" + //
                 "\r\n" + //

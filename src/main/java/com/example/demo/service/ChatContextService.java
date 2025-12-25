@@ -15,6 +15,24 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+/**
+ * AI 会话上下文存储服务。
+ * <p>
+ * 目标：为已登录用户保存最近对话（user/assistant），供下一轮请求“上下文预热”。
+ * <p>
+ * 存储策略：
+ * <ul>
+ *   <li>Redis：主存储（Key = {@code chat:ctx:{userId}}），带 TTL，读写快。</li>
+ *   <li>MySQL：回退/持久化（{@code ChatHistory}），用于 Redis 为空时加载。</li>
+ *   <li>lastSnapshot：内存中保存最近一次写入，用于触发持久化（例如 Key 过期监听时回写）。</li>
+ * </ul>
+ *
+ * 重要配置：
+ * <ul>
+ *   <li>{@code app.chat.context.max-chars}：最大上下文字符数，超出则从最早消息开始裁剪。</li>
+ *   <li>{@code app.chat.redis.ttl-seconds}：Redis TTL（秒）。</li>
+ * </ul>
+ */
 public class ChatContextService {
 
     private final StringRedisTemplate redis;
@@ -22,7 +40,8 @@ public class ChatContextService {
     private final ObjectMapper mapper = new ObjectMapper();
     private static final Logger log = LoggerFactory.getLogger(ChatContextService.class);
 
-    // 内存中保留最近一次写入内容，用于 Redis 过期事件回写数据库
+    // 内存中保留最近一次写入内容，用于 Redis 过期事件回写数据库。
+    // 注意：这是“进程内”缓存，服务重启会丢失；但 Redis/DB 仍然是权威来源。
     private final Map<Integer, String> lastSnapshot = new ConcurrentHashMap<>();
 
     @Value("${app.chat.context.max-chars:16000}")
@@ -67,7 +86,7 @@ public class ChatContextService {
         msg.put("ts", System.currentTimeMillis());
         messages.add(msg);
 
-        // 长度控制（按字符数裁剪）
+        // 长度控制（按字符数裁剪）：避免上下文无限增长导致 token/成本/延迟上升。
         String newJson = toJson(messages);
         if (newJson.length() > maxChars) {
             // 从头部移除直到满足
@@ -85,6 +104,7 @@ public class ChatContextService {
     }
 
     public String getContextJson(Integer userId) {
+        // 读流程：Redis 优先，未命中则回退 DB。
         String key = redisKey(userId);
         String v = redis.opsForValue().get(key);
         if (v != null) {

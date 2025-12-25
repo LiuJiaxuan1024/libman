@@ -14,6 +14,15 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RestController
 @ConditionalOnProperty(name = "ai.enabled", havingValue = "true")
 @RequestMapping("/ai")
+/**
+ * AI 对话接口。
+ * <p>
+ * - {@code POST /ai/chat}：同步返回完整回复。
+ * - {@code POST /ai/chat/stream}：SSE 形式输出（事件：session/token/done/error）。
+ * <p>
+ * 上下文：如果用户已登录，会把 user/assistant 消息写入 {@link ChatContextService}，
+ * 供下一轮对话在 {@link com.example.demo.ai.LibraryAiService} 中进行“上下文预热”。
+ */
 public class AiController {
 
     private final LibraryAiService aiService;
@@ -53,7 +62,7 @@ public class AiController {
     public SseEmitter stream(@RequestBody Map<String, Object> body, HttpSession session) {
         String sessionId = body == null ? null : String.valueOf(body.getOrDefault("sessionId", ""));
         String message = body == null ? null : String.valueOf(body.getOrDefault("message", ""));
-        SseEmitter emitter = new SseEmitter(0L); // no timeout
+        SseEmitter emitter = new SseEmitter(0L); // 不超时：由前端自行关闭连接
         if (message == null || message.isBlank()) {
             try {
                 emitter.send(SseEmitter.event().name("error").data("message 不能为空"));

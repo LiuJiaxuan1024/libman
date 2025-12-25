@@ -1,7 +1,8 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 创建 axios 实例
+// 创建 axios 实例（前端统一出口）
+// 注意：baseURL='/api' 通常配合 Vite 代理或后端网关，把前端请求转发到 SpringBoot。
 const request = axios.create({
   baseURL: '/api',
   timeout: 10000,
@@ -25,7 +26,8 @@ request.interceptors.response.use(
   response => {
     const res = response.data
     
-    // 根据后端的 Result 结构判断
+    // 根据后端的 Result 结构判断。
+    // 约定：{ status: 'SUCCESS'|'FAIL'|'UNLOGIN', data?, errorMessage? }
     if (res.status === 'SUCCESS') {
       // 如果有data字段，返回data；否则返回整个res（用于AI接口等）
       return res.data !== undefined ? res.data : res
@@ -61,7 +63,7 @@ request.interceptors.response.use(
       return Promise.resolve(null)
     }
     
-    // 如果是401错误且是首次加载，不显示错误提示
+    // 如果是401错误：交由上层（路由守卫/组件）统一处理为未登录。
     if (error.response?.status === 401) {
       return Promise.reject(new Error('UNLOGIN'))
     }

@@ -56,7 +56,7 @@ public class TavilyWebTool {
         }
         int limit = (maxResults == null || maxResults <= 0) ? defaultMaxResults : maxResults;
         String usedDepth = (depth == null || depth.isBlank()) ? defaultDepth : depth;
-        // 构造请求体
+        // 构造请求体（Tavily 需要 api_key 放在 body 里）。
         String bodyJson = String.format("{\"api_key\":\"%s\",\"query\":\"%s\",\"search_depth\":\"%s\",\"include_answer\":true,\"max_results\":%d}",
                 escape(apiKey), escape(query), escape(usedDepth), limit);
         HttpRequest request = HttpRequest.newBuilder()
@@ -77,6 +77,7 @@ public class TavilyWebTool {
     }
 
     private String resolveApiKey() {
+        // 允许用环境变量快速覆盖（便于本地/容器部署）。
         String env = System.getenv("TAVILY_API_KEY");
         if (env != null && !env.isBlank()) return env;
         return propertyApiKey;

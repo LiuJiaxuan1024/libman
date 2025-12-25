@@ -15,6 +15,19 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @Component
+/**
+ * 供 AI 模型调用的“工具集合”。
+ * <p>
+ * LangChain4j 会把带 {@link dev.langchain4j.agent.tool.Tool} 注解的方法暴露给模型：
+ * 模型在回答过程中可主动调用这些方法来查询数据库/组合统计/回退到网络搜索。
+ * <p>
+ * 设计原则：
+ * <ul>
+ *   <li>工具方法应尽量“可预测、无副作用”（多数为查询）。</li>
+ *   <li>入参要做基本兜底（空值、limit 上限等），避免模型生成异常参数导致服务出错。</li>
+ *   <li>返回值尽量结构化（List/对象/可解析字符串），方便模型组织 Markdown 表格输出。</li>
+ * </ul>
+ */
 public class MapperTools {
     private final BookInfoMapper bookInfoMapper;
     private final BookCategoryMapper categoryMapper;
@@ -29,7 +42,8 @@ public class MapperTools {
         this.tavilyWebTool = tavilyWebTool;
     }
 
-    // 简单的类别同义 & 回退映射，可扩展
+    // 简单的类别同义 & 回退映射，可扩展。
+    // 用途：当用户输入的分类名在库里不存在时，让模型有“可解释的替代分类”。
     private static final Map<String, List<String>> CATEGORY_FALLBACK = Map.of(
             "文学", List.of("艺术", "文化", "历史"),
             "小说", List.of("文学", "艺术"),
@@ -96,7 +110,8 @@ public class MapperTools {
             }
         }
         if (matchedIds.isEmpty()) return java.util.Collections.emptyList();
-        // 简单分页抓取较大数量（假设数据量不巨大，可调整抓取深度）
+        // 简单分页抓取较大数量后在内存中过滤。
+        // 如果数据量变大，建议改为“按分类 ID 直接 SQL 过滤”以避免全量抓取。
         List<Integer> finalMatchedIds = matchedIds; // 使其 effectively final 供 lambda 使用
         List<BookInfo> batch = bookInfoMapper.queryBookListByPage(0, Math.max(limit, 200));
         List<BookInfo> filtered = batch.stream()

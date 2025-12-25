@@ -10,6 +10,20 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * AI 对话服务（后端聚合层）。
+ * <p>
+ * 职责：
+ * <ul>
+ *   <li>构建 LangChain4j 的 {@link LibraryAssistant}（绑定模型、工具、会话记忆）。</li>
+ *   <li>确保每次对话有稳定的 sessionId（用于 AI 记忆与“续写补全”）。</li>
+ *   <li>为已登录用户拼接“历史上下文预热”（来自 {@code ChatContextService}）。</li>
+ *   <li>对模型输出做清洗（去掉可能回显的 UUID / sessionId），并在检测到截断时尝试二次补全。</li>
+ *   <li>为 SSE 提供“伪流式”输出：先生成完整回复，再逐字符推送给前端。</li>
+ * </ul>
+ *
+ * 说明：本类只做“编排”，真正的业务查询通过 {@link MapperTools} 作为工具由模型触发调用。
+ */
 @Service
 @ConditionalOnProperty(name = "ai.enabled", havingValue = "true")
 public class LibraryAiService {
@@ -18,6 +32,8 @@ public class LibraryAiService {
     private final com.example.demo.service.ChatContextService chatContextService;
 
     public LibraryAiService(ChatLanguageModel chatLanguageModel, MapperTools mapperTools, com.example.demo.service.ChatContextService chatContextService) {
+        // 为每个 sessionId 创建一个“窗口记忆”（最多保留最近 N 条消息）。
+        // 注意：这里的记忆是模型侧的对话记忆，与 ChatContextService 的 Redis/DB 上下文是两条不同链路。
         ChatMemoryProvider memoryProvider = sessionId -> MessageWindowChatMemory.withMaxMessages(20);
         this.assistant = AiServices.builder(LibraryAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
@@ -27,6 +43,12 @@ public class LibraryAiService {
         this.chatContextService = chatContextService;
     }
 
+    /**
+     * 保证 sessionId 非空。
+     * <p>
+     * sessionId 一方面作为 LangChain4j MemoryId（维持同会话记忆），
+     * 另一方面用于本服务的“续写补全”与“回显清洗”。
+     */
     public String ensureSessionId(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return UUID.randomUUID().toString();
@@ -34,6 +56,11 @@ public class LibraryAiService {
         return sessionId;
     }
 
+    /**
+     * 同步对话：单次请求返回完整文本。
+     * <p>
+     * 流程：补全 sessionId → 拼接上下文预热 → 调用模型 → 清洗输出 → 如疑似截断则二次补全并合并。
+     */
     public String chat(String sessionId, String message, Integer userId) {
         String sid = ensureSessionId(sessionId);
         String effectiveMessage = prepareWithPreheat(userId, message);
@@ -53,6 +80,20 @@ public class LibraryAiService {
         return full;
     }
 
+    /**
+     * SSE “伪流式”对话。
+     * <p>
+     * 由于上游模型/SDK 未在这里直接做 token 流式回调，本项目采用：
+     * 先同步生成完整回复，再在单独线程按 code point 逐字推送。
+     * <p>
+     * SSE 事件名约定：
+     * <ul>
+     *   <li>session：服务端最终使用的 sessionId</li>
+     *   <li>token：逐字/逐片段输出</li>
+     *   <li>done：完整文本</li>
+     *   <li>error：异常信息</li>
+     * </ul>
+     */
     public void simulatedStreamChat(String sessionId, String message,
                                     java.util.function.Consumer<String> sessionEventConsumer,
                                     java.util.function.Consumer<String> tokenConsumer,
@@ -96,7 +137,8 @@ public class LibraryAiService {
         }, "ai-stream-" + sid).start();
     }
 
-    // 从 ChatContextService 读取历史并生成一个不可见的前缀，用于模型预热（不应被模型逐字回放）
+    // 从 ChatContextService 读取历史并生成一个不可见的前缀，用于模型预热。
+    // 目标：让模型“理解用户之前聊过什么”，但又尽量避免模型把历史原样复述出来。
     private String prepareWithPreheat(Integer userId, String message) {
         if (userId == null) return message;
         try {
@@ -153,7 +195,8 @@ public class LibraryAiService {
         return ch;
     }
 
-    // 如果回复以 sessionId 或任意 UUID 起始，剥离它以及后续的空白
+    // 如果回复以 sessionId 或任意 UUID 起始，剥离它以及后续的空白。
+    // 原因：某些模型/链路可能会回显 MemoryId 或内部跟踪 id，影响用户阅读。
     private String stripLeadingUuid(String text, String sid) {
         if (text == null) return "";
         String trimmed = text.trim();
@@ -168,7 +211,8 @@ public class LibraryAiService {
         return text;
     }
 
-    // 进一步清洗：头部 UUID + 任何内嵌的 sid/UUID（避免模型回声）
+    // 进一步清洗：头部 UUID + 任何内嵌的 sid/UUID（避免模型回声）。
+    // 注意：这里是“显示层清洗”，不会影响 ChatContextService 的原始存储。
     private String cleanReply(String text, String sid) {
         if (text == null) return "";
         String original = text;
